@@ -48,6 +48,13 @@ public class TestCTASPartitionFilter extends PlanTestBase {
   }
 
   @Test
+  public void testDrill3965() throws Exception {
+    test("use dfs_test.tmp");
+    test("create table orders_auto_partition partition by(o_orderpriority) as select * from cp.`tpch/orders.parquet`");
+    test("explain plan for select count(*) from `orders_auto_partition/1_0_1.parquet` where o_orderpriority = '5-LOW'");
+  }
+
+  @Test
   public void withDistribution() throws Exception {
     test("alter session set `planner.slice_target` = 1");
     test("alter session set `store.partition.hash_distribute` = true");
@@ -74,7 +81,7 @@ public class TestCTASPartitionFilter extends PlanTestBase {
     test("use dfs_test.tmp");
     test(String.format("create table drill_3410 partition by (o_orderpriority) as select * from dfs_test.`%s/multilevel/parquet`", TEST_RES_PATH));
     String query = "select * from drill_3410 where (o_orderpriority = '1-URGENT' and o_orderkey = 10) or (o_orderpriority = '2-HIGH' or o_orderkey = 11)";
-    testIncludeFilter(query, 5, "Filter", 34);
+    testIncludeFilter(query, 1, "Filter", 34);
   }
 
   @Test

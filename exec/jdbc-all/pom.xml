@@ -21,7 +21,7 @@
   <parent>
     <groupId>org.apache.drill.exec</groupId>
     <artifactId>exec-parent</artifactId>
-    <version>1.2.0-SNAPSHOT</version>
+    <version>1.3.0-SNAPSHOT</version>
   </parent>
 
   <artifactId>drill-jdbc-all</artifactId>
@@ -135,17 +135,6 @@
       </exclusions>
     </dependency>
     <dependency>
-      <groupId>org.apache.drill</groupId>
-      <artifactId>drill-common</artifactId>
-      <version>${project.version}</version>
-      <exclusions>
-        <exclusion>
-          <artifactId>javassist</artifactId>
-          <groupId>javassist</groupId>
-        </exclusion>
-      </exclusions>
-    </dependency>
-    <dependency>
       <groupId>org.apache.drill.exec</groupId>
       <artifactId>drill-jdbc</artifactId>
       <version>${project.version}</version>
@@ -210,7 +199,7 @@
 
   <build>
     <plugins>
-     
+
       <plugin>
         <artifactId>maven-antrun-plugin</artifactId>
         <executions>
@@ -283,7 +272,7 @@
           <createDependencyReducedPom>true</createDependencyReducedPom>
           <dependencyReducedPomLocation>${project.build.directory}/dependency-reduced-pom.xml</dependencyReducedPomLocation>
           <minimizeJar>false</minimizeJar>
-          
+
           <artifactSet>
             <includes>
               <include>*:*</include>
@@ -325,7 +314,7 @@
             <!-- Relocate Drill classes to minimize classloader hell. -->
             <relocation><pattern>org.apache.drill.exec.</pattern><shadedPattern>oadd.org.apache.drill.exec.</shadedPattern></relocation>
             <relocation><pattern>org.apache.drill.common.</pattern><shadedPattern>oadd.org.apache.drill.common.</shadedPattern></relocation>
-            
+
             <!-- Move dependencies out of path -->
             <relocation><pattern>antlr.</pattern><shadedPattern>oadd.antlr.</shadedPattern></relocation>
             <relocation><pattern>antlr.</pattern><shadedPattern>oadd.antlr.</shadedPattern></relocation>
@@ -420,7 +409,6 @@
                <exclude>org/apache/drill/exec/server/rest/**</exclude>
                <exclude>org/apache/drill/exec/rpc/data/**</exclude>
                <exclude>org/apache/drill/exec/rpc/control/**</exclude>
-               <exclude>org/apache/drill/exec/work/**</exclude>
              </excludes>
            </filter>
          </filters>
@@ -505,7 +493,7 @@
         </plugins>
       </build>
     </profile>
-    <!-- mondrian data includes 10s of MBs of JSON file if you want to include 
+    <!-- mondrian data includes 10s of MBs of JSON file if you want to include
          them run maven with -Pwith-mondrian-data -->
     <profile>
       <id>with-mondrian-data</id>

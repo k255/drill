@@ -19,9 +19,9 @@ package org.apache.drill.exec.server;
 
 import io.netty.channel.EventLoopGroup;
 
-import java.io.Closeable;
-
+import org.apache.drill.common.DrillAutoCloseables;
 import org.apache.drill.common.config.DrillConfig;
+import org.apache.drill.common.scanner.persistence.ScanResult;
 import org.apache.drill.exec.ExecConstants;
 import org.apache.drill.exec.memory.BufferAllocator;
 import org.apache.drill.exec.memory.RootAllocatorFactory;
@@ -30,8 +30,7 @@ import org.apache.drill.exec.rpc.TransportCheck;
 
 import com.codahale.metrics.MetricRegistry;
 
-
-public class BootStrapContext implements Closeable {
+public class BootStrapContext implements AutoCloseable {
   private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(BootStrapContext.class);
 
   private final DrillConfig config;
@@ -39,9 +38,11 @@ public class BootStrapContext implements Closeable {
   private final EventLoopGroup loop2;
   private final MetricRegistry metrics;
   private final BufferAllocator allocator;
+  private final ScanResult classpathScan;
 
-  public BootStrapContext(DrillConfig config) {
+  public BootStrapContext(DrillConfig config, ScanResult classpathScan) {
     this.config = config;
+    this.classpathScan = classpathScan;
     this.loop = TransportCheck.createEventLoopGroup(config.getInt(ExecConstants.BIT_SERVER_RPC_THREADS), "BitServer-");
     this.loop2 = TransportCheck.createEventLoopGroup(config.getInt(ExecConstants.BIT_SERVER_RPC_THREADS), "BitClient-");
     this.metrics = DrillMetrics.getInstance();
@@ -68,6 +69,10 @@ public class BootStrapContext implements Closeable {
     return allocator;
   }
 
+  public ScanResult getClasspathScan() {
+    return classpathScan;
+  }
+
   @Override
   public void close() {
     try {
@@ -76,6 +81,6 @@ public class BootStrapContext implements Closeable {
       logger.warn("failure resetting metrics.", e);
     }
     loop.shutdownGracefully();
-    allocator.close();
+    DrillAutoCloseables.closeNoChecked(allocator);
   }
 }

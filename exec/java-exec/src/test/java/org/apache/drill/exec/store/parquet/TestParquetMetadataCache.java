@@ -18,12 +18,9 @@
 package org.apache.drill.exec.store.parquet;
 
 import com.google.common.base.Joiner;
-import org.apache.commons.io.filefilter.IOFileFilter;
-import org.apache.drill.BaseTestQuery;
 import org.apache.drill.PlanTestBase;
 import org.apache.drill.common.util.TestTools;
 import org.apache.commons.io.FileUtils;
-import org.apache.drill.exec.store.dfs.DrillPathFilter;
 import org.apache.hadoop.fs.Path;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -51,7 +48,7 @@ public class TestParquetMetadataCache extends PlanTestBase {
   }
 
   @Test
-  public void testPartitionPruningWithMetadataCache() throws Exception {
+  public void testPartitionPruningWithMetadataCache_1() throws Exception {
     test(String.format("refresh table metadata dfs_test.`%s/%s`", getDfsTestTmpSchemaLocation(), tableName));
     checkForMetadataFile(tableName);
     String query = String.format("select dir0, dir1, o_custkey, o_orderdate from dfs_test.`%s/%s` " +
@@ -65,6 +62,66 @@ public class TestParquetMetadataCache extends PlanTestBase {
     String numFilesPattern = "numFiles=" + expectedNumFiles;
     String usedMetaPattern = "usedMetadataFile=true";
     PlanTestBase.testPlanMatchingPatterns(query, new String[]{numFilesPattern, usedMetaPattern}, new String[] {"Filter"});
+  }
+
+  @Test // DRILL-3917
+  public void testPartitionPruningWithMetadataCache_2() throws Exception {
+    test(String.format("refresh table metadata dfs_test.`%s/%s`", getDfsTestTmpSchemaLocation(), tableName));
+    checkForMetadataFile(tableName);
+    String query = String.format("select dir0, dir1, o_custkey, o_orderdate from dfs_test.`%s/%s` " +
+            " where dir0=1994",
+        getDfsTestTmpSchemaLocation(), tableName);
+    int expectedRowCount = 40;
+    int expectedNumFiles = 4;
+
+    int actualRowCount = testSql(query);
+    assertEquals(expectedRowCount, actualRowCount);
+    String numFilesPattern = "numFiles=" + expectedNumFiles;
+    String usedMetaPattern = "usedMetadataFile=true";
+    PlanTestBase.testPlanMatchingPatterns(query, new String[]{numFilesPattern, usedMetaPattern}, new String[] {"Filter"});
+  }
+
+  @Test // DRILL-3937 (partitioning column is varchar)
+  public void testPartitionPruningWithMetadataCache_3() throws Exception {
+    String tableName = "orders_ctas_varchar";
+    test("use dfs_test.tmp");
+
+    test(String.format("create table %s (o_orderdate, o_orderpriority) partition by (o_orderpriority) "
+        + "as select o_orderdate, o_orderpriority from dfs_test.`%s/multilevel/parquet/1994/Q1`", tableName, TEST_RES_PATH));
+    test(String.format("refresh table metadata %s", tableName));
+    checkForMetadataFile(tableName);
+    String query = String.format("select * from %s where o_orderpriority = '1-URGENT'", tableName);
+    int expectedRowCount = 3;
+    int expectedNumFiles = 1;
+
+    int actualRowCount = testSql(query);
+    assertEquals(expectedRowCount, actualRowCount);
+    String numFilesPattern = "numFiles=" + expectedNumFiles;
+    String usedMetaPattern = "usedMetadataFile=true";
+
+    testPlanMatchingPatterns(query, new String[]{numFilesPattern, usedMetaPattern}, new String[] {});
+  }
+
+  @Test // DRILL-3937 (partitioning column is binary using convert_to)
+  public void testPartitionPruningWithMetadataCache_4() throws Exception {
+    String tableName = "orders_ctas_binary";
+    test("use dfs_test.tmp");
+
+    test(String.format("create table %s (o_orderdate, o_orderpriority) partition by (o_orderpriority) "
+        + "as select o_orderdate, convert_to(o_orderpriority, 'UTF8') as o_orderpriority "
+        + "from dfs_test.`%s/multilevel/parquet/1994/Q1`", tableName, TEST_RES_PATH));
+    test(String.format("refresh table metadata %s", tableName));
+    checkForMetadataFile(tableName);
+    String query = String.format("select * from %s where o_orderpriority = '1-URGENT'", tableName);
+    int expectedRowCount = 3;
+    int expectedNumFiles = 1;
+
+    int actualRowCount = testSql(query);
+    assertEquals(expectedRowCount, actualRowCount);
+    String numFilesPattern = "numFiles=" + expectedNumFiles;
+    String usedMetaPattern = "usedMetadataFile=true";
+
+    testPlanMatchingPatterns(query, new String[]{numFilesPattern, usedMetaPattern}, new String[] {});
   }
 
   @Test

@@ -22,26 +22,16 @@ import java.lang.management.RuntimeMXBean;
 import java.net.URL;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map.Entry;
 import java.util.Properties;
-import java.util.Queue;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.drill.common.exceptions.DrillConfigurationException;
-import org.apache.drill.common.expression.LogicalExpression;
-import org.apache.drill.common.expression.SchemaPath;
-import org.apache.drill.common.logical.FormatPluginConfigBase;
-import org.apache.drill.common.logical.StoragePluginConfigBase;
-import org.apache.drill.common.logical.data.LogicalOperatorBase;
-import org.apache.drill.common.util.PathScanner;
+import org.apache.drill.common.scanner.ClassPathScanner;
 import org.reflections.util.ClasspathHelper;
 
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.core.JsonParser.Feature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Joiner;
+import com.google.common.base.Stopwatch;
 import com.google.common.collect.ImmutableList;
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
@@ -50,7 +40,6 @@ import com.typesafe.config.ConfigRenderOptions;
 public final class DrillConfig extends NestedConfig{
   private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(DrillConfig.class);
 
-  private final ObjectMapper mapper;
   private final ImmutableList<String> startupArguments;
 
   public static final boolean ON_OSX = System.getProperty("os.name").contains("OS X");
@@ -58,36 +47,16 @@ public final class DrillConfig extends NestedConfig{
   @SuppressWarnings("restriction")
   private static final long MAX_DIRECT_MEMORY = sun.misc.VM.maxDirectMemory();
 
-  @SuppressWarnings("unchecked")
-  private volatile List<Queue<Object>> sinkQueues = new CopyOnWriteArrayList<Queue<Object>>(new Queue[1]);
-
   @VisibleForTesting
   public DrillConfig(Config config, boolean enableServerConfigs) {
     super(config);
     logger.debug("Setting up DrillConfig object.");
     logger.trace("Given Config object is:\n{}",
                  config.root().render(ConfigRenderOptions.defaults()));
-    mapper = new ObjectMapper();
-
-    if (enableServerConfigs) {
-      SimpleModule deserModule = new SimpleModule("LogicalExpressionDeserializationModule")
-        .addDeserializer(LogicalExpression.class, new LogicalExpression.De(this))
-        .addDeserializer(SchemaPath.class, new SchemaPath.De());
-
-      mapper.registerModule(deserModule);
-      mapper.enable(SerializationFeature.INDENT_OUTPUT);
-      mapper.configure(Feature.ALLOW_UNQUOTED_FIELD_NAMES, true);
-      mapper.configure(JsonGenerator.Feature.QUOTE_FIELD_NAMES, true);
-      mapper.configure(Feature.ALLOW_COMMENTS, true);
-      mapper.registerSubtypes(LogicalOperatorBase.getSubTypes(this));
-      mapper.registerSubtypes(StoragePluginConfigBase.getSubTypes(this));
-      mapper.registerSubtypes(FormatPluginConfigBase.getSubTypes(this));
-    }
-
     RuntimeMXBean bean = ManagementFactory.getRuntimeMXBean();
     this.startupArguments = ImmutableList.copyOf(bean.getInputArguments());
     logger.debug("DrillConfig object initialized.");
-  };
+  }
 
   public List<String> getStartupArguments() {
     return startupArguments;
@@ -173,6 +142,8 @@ public final class DrillConfig extends NestedConfig{
   private static DrillConfig create(String overrideFileResourcePathname,
                                     final Properties overriderProps,
                                     final boolean enableServerConfigs) {
+    final StringBuilder logString = new StringBuilder();
+    final Stopwatch watch = new Stopwatch().start();
     overrideFileResourcePathname =
         overrideFileResourcePathname == null
             ? CommonConstants.CONFIG_OVERRIDE_RESOURCE_PATHNAME
@@ -185,7 +156,7 @@ public final class DrillConfig extends NestedConfig{
       final URL url =
           classLoader.getResource(CommonConstants.CONFIG_DEFAULT_RESOURCE_PATHNAME);
       if (null != url) {
-        logger.info("Loading base configuration file at {}.", url);
+        logString.append("Base Configuration:\n\t- ").append(url).append("\n");
         fallback =
             ConfigFactory.load(classLoader,
                                CommonConstants.CONFIG_DEFAULT_RESOURCE_PATHNAME);
@@ -194,14 +165,13 @@ public final class DrillConfig extends NestedConfig{
     }
 
     // 2. Load per-module configuration files.
-    final Collection<URL> urls = PathScanner.getConfigURLs();
-    final String lineBrokenList =
-        urls.size() == 0 ? "" : "\n\t- " + Joiner.on("\n\t- ").join(urls);
-    logger.info("Loading {} module configuration files at: {}.",
-                urls.size(), lineBrokenList);
+    final Collection<URL> urls = ClassPathScanner.getConfigURLs();
+    logString.append("\nIntermediate Configuration and Plugin files, in order of precedence:\n");
     for (URL url : urls) {
+      logString.append("\t- ").append(url).append("\n");
       fallback = ConfigFactory.parseURL(url).withFallback(fallback);
     }
+    logString.append("\n");
 
     // 3. Load any specified overrides configuration file along with any
     //    overrides from JVM system properties (e.g., {-Dname=value").
@@ -210,77 +180,67 @@ public final class DrillConfig extends NestedConfig{
     final URL overrideFileUrl =
         Thread.currentThread().getContextClassLoader().getResource(overrideFileResourcePathname);
     if (null != overrideFileUrl ) {
-      logger.info("Loading override config. file at {}.", overrideFileUrl);
+      logString.append("Override File: ").append(overrideFileUrl).append("\n");
     }
     Config effectiveConfig =
         ConfigFactory.load(overrideFileResourcePathname).withFallback(fallback);
 
     // 4. Apply any overriding properties.
     if (overriderProps != null) {
-      logger.info("Loading override Properties parameter {}.", overriderProps);
+      logString.append("Overridden Properties:\n");
+      for(Entry<Object, Object> entry : overriderProps.entrySet()){
+        logString.append("\t-").append(entry.getKey()).append(" = ").append(entry.getValue()).append("\n");
+      }
+      logString.append("\n");
       effectiveConfig =
           ConfigFactory.parseProperties(overriderProps).withFallback(effectiveConfig);
     }
 
     // 5. Create DrillConfig object from Config object.
+    logger.info("Configuration and plugin file(s) identified in {}ms.\n{}",
+        watch.elapsed(TimeUnit.MILLISECONDS),
+        logString);
     return new DrillConfig(effectiveConfig.resolve(), enableServerConfigs);
   }
 
-  public <T> Class<T> getClassAt(String location, Class<T> clazz) throws DrillConfigurationException{
-    String className = this.getString(location);
+  public <T> Class<T> getClassAt(String location, Class<T> clazz) throws DrillConfigurationException {
+    final String className = getString(location);
     if (className == null) {
-      throw new DrillConfigurationException(String.format("No class defined at location '%s'.  Expected a definition of the class []", location, clazz.getCanonicalName()));
+      throw new DrillConfigurationException(String.format(
+          "No class defined at location '%s'. Expected a definition of the class []",
+          location, clazz.getCanonicalName()));
     }
-    try{
-      Class<?> c = Class.forName(className);
+
+    try {
+      final Class<?> c = Class.forName(className);
       if (clazz.isAssignableFrom(c)) {
-        @SuppressWarnings("unchecked") Class<T> t = (Class<T>) c;
+        @SuppressWarnings("unchecked")
+        final Class<T> t = (Class<T>) c;
         return t;
-      } else {
-        throw new DrillConfigurationException(String.format("The class [%s] listed at location '%s' should be of type [%s].  It isn't.", className, location, clazz.getCanonicalName()));
       }
+
+      throw new DrillConfigurationException(String.format("The class [%s] listed at location '%s' should be of type [%s].  It isn't.", className, location, clazz.getCanonicalName()));
     } catch (Exception ex) {
       if (ex instanceof DrillConfigurationException) {
         throw (DrillConfigurationException) ex;
       }
       throw new DrillConfigurationException(String.format("Failure while initializing class [%s] described at configuration value '%s'.", className, location), ex);
     }
-
   }
 
   public <T> T getInstanceOf(String location, Class<T> clazz) throws DrillConfigurationException{
-    Class<T> c = getClassAt(location, clazz);
+    final Class<T> c = getClassAt(location, clazz);
     try {
-      T t = c.newInstance();
+      final T t = c.newInstance();
       return t;
     } catch (Exception ex) {
       throw new DrillConfigurationException(String.format("Failure while instantiating class [%s] located at '%s.", clazz.getCanonicalName(), location), ex);
     }
   }
 
-  public void setSinkQueues(int number, Queue<Object> queue) {
-    sinkQueues.set(number, queue);
-  }
-
-  public Queue<Object> getQueue(int number) {
-    if (sinkQueues.size() <= number || number < 0 || sinkQueues == null) {
-      throw new IllegalArgumentException(String.format("Queue %d is not available.", number));
-    }
-    return sinkQueues.get(number);
-  }
-
-  public ObjectMapper getMapper() {
-    return mapper;
-  }
-
   @Override
   public String toString() {
     return this.root().render();
-  }
-
-  public static void main(String[] args)  throws Exception {
-    //"-XX:MaxDirectMemorySize"
-    DrillConfig config = DrillConfig.create();
   }
 
   public static long getMaxDirectMemory() {
